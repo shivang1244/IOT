@@ -1,0 +1,129 @@
+#include <Wire.h>
+#include <ESP8266WiFi.h>
+#include <WiFiUdp.h>
+
+// MPU6050 I2C address
+const int MPU_ADDR = 0x68;
+
+// WiFi credentials
+// const char* ssid = "himani";
+// const char* password = "himani06";
+
+const char* ssid = "iPhone";
+const char* password = "shivangS";
+
+// UDP settings
+WiFiUDP udp;
+const int udpPort = 8888;
+const char* pcIP = "172.20.10.10"; // Replace with your PC's IP
+
+// MPU6050 variables
+int16_t accelerometer_x, accelerometer_y, accelerometer_z;
+int16_t gyro_x, gyro_y, gyro_z;
+int16_t temperature;
+
+// Flex sensor pins
+const int leftFlexPin = A0;
+const int rightFlexPin = A0; // Adjust if using separate pins
+
+// Calibration values
+int flexLeftBase = 0;
+int flexRightBase = 0;
+const int FLEX_THRESHOLD = 100;
+
+// Mouse control variables
+int mouseX = 0, mouseY = 0;
+bool leftClick = false, rightClick = false;
+
+void setup() {
+  Serial.begin(115200);
+  
+  // Initialize MPU6050
+  Wire.begin();
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(0x6B); // PWR_MGMT_1 register
+  Wire.write(0);    // Wake up the MPU-6050
+  Wire.endTransmission(true);
+  
+  // Connect to WiFi
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.println("Connecting to WiFi...");
+  }
+  Serial.println("Connected to WiFi");
+  
+  // Calibrate flex sensors
+  calibrateFlexSensors();
+}
+
+void loop() {
+  readMPU6050();
+  readFlexSensors();
+  processGestures();
+  sendDataToPC();
+  delay(50); // Adjust for responsiveness
+}
+
+void readMPU6050() {
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(0x3B); // Starting with register 0x3B
+  Wire.endTransmission(false);
+  Wire.requestFrom(MPU_ADDR, 14, true);
+  
+  accelerometer_x = Wire.read() << 8 | Wire.read();
+  accelerometer_y = Wire.read() << 8 | Wire.read();
+  accelerometer_z = Wire.read() << 8 | Wire.read();
+  temperature = Wire.read() << 8 | Wire.read();
+  gyro_x = Wire.read() << 8 | Wire.read();
+  gyro_y = Wire.read() << 8 | Wire.read();
+  gyro_z = Wire.read() << 8 | Wire.read();
+}
+
+void readFlexSensors() {
+  int leftFlexValue = analogRead(leftFlexPin);
+  int rightFlexValue = analogRead(rightFlexPin);
+  
+  leftClick = (abs(leftFlexValue - flexLeftBase) > FLEX_THRESHOLD);
+  rightClick = (abs(rightFlexValue - flexRightBase) > FLEX_THRESHOLD);
+}
+
+void calibrateFlexSensors() {
+  Serial.println("Calibrating flex sensors... Keep hand relaxed.");
+  delay(3000);
+  
+  int leftSum = 0, rightSum = 0;
+  for (int i = 0; i < 100; i++) {
+    leftSum += analogRead(leftFlexPin);
+    rightSum += analogRead(rightFlexPin);
+    delay(10);
+  }
+  
+  flexLeftBase = leftSum / 100;
+  flexRightBase = rightSum / 100;
+  
+  Serial.print("Left flex base: "); Serial.println(flexLeftBase);
+  Serial.print("Right flex base: "); Serial.println(flexRightBase);
+}
+
+void processGestures() {
+  // Convert accelerometer data to mouse movement
+  // Adjust sensitivity as needed
+  mouseX = map(accelerometer_x, -17000, 17000, -10, 10);
+  mouseY = map(accelerometer_y, -17000, 17000, -10, 10);
+  
+  // Apply dead zone to reduce jitter
+  if (abs(mouseX) < 2) mouseX = 0;
+  if (abs(mouseY) < 2) mouseY = 0;
+}
+
+void sendDataToPC() {
+  String data = String(mouseX) + "," + String(mouseY) + "," + 
+                (leftClick ? "1" : "0") + "," + (rightClick ? "1" : "0");
+  
+  udp.beginPacket(pcIP, udpPort);
+  udp.write(data.c_str());
+  udp.endPacket();
+  
+  Serial.println("Sent: " + data);
+}
